@@ -151,7 +151,7 @@ jobs:
         run: docker build -t "$BACKEND_IMAGE_TAG" ./backend
 
       - name: Trivy scan frontend image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE_TAG }}
           format: table
@@ -159,7 +159,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Trivy scan backend image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE_TAG }}
           format: table
