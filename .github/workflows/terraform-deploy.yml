@@ -71,7 +71,7 @@ jobs:
           if-no-files-found: error
 
   terraform-apply:
-    name: Terraform Apply and Deploy
+    name: Terraform Apply
     needs: terraform-plan
     runs-on: ubuntu-latest
     environment: dev
@@ -117,14 +117,51 @@ jobs:
       - name: Terraform apply saved plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -input=false tfplan
+    
+  deploy-application:
+    name: Deploy Application
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    environment: dev
 
-      - name:  Deploy application via SSM
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set deployment image tags
+        run: |
+          echo "FRONTEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-frontend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "BACKEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-backend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy application via SSM
         env:
           FRONTEND_IMAGE_TAG: ${{ env.FRONTEND_IMAGE_TAG }}
           BACKEND_IMAGE_TAG: ${{ env.BACKEND_IMAGE_TAG }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: bash terraform-infra/scripts/deploy.sh
+        run: bash terraform-infra/scripts/deploy-application-ssm.sh
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false \
+            -backend-config=backend.hcl \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
 
       - name: Post-deployment verification
         env:
@@ -140,12 +177,16 @@ jobs:
 
           for attempt in {1..20}; do
             if curl --fail --silent --show-error --max-time 15 "$FRONTEND_URL"; then
+              echo "Frontend is healthy."
               break
             fi
+
             if [ "$attempt" -eq 20 ]; then
               echo "Frontend verification failed at $FRONTEND_URL"
               exit 1
             fi
+
+            echo "Waiting for frontend... attempt $attempt/20"
             sleep 15
           done
 
@@ -169,6 +210,7 @@ jobs:
             fi
 
             commands_file="$(mktemp)"
+
             printf '{"commands":["set -euo pipefail","docker ps --filter name=%s --format {{.Names}} | grep -x %s","curl --fail --silent --show-error --max-time 15 %s"]}\n' \
               "$service_name" \
               "$service_name" \
@@ -182,6 +224,7 @@ jobs:
               --region "$AWS_REGION" \
               --query "Command.CommandId" \
               --output text)"
+
             rm -f "$commands_file"
 
             for instance_id in $instance_ids; do

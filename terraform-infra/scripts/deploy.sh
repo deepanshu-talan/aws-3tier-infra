@@ -49,16 +49,6 @@ fi
 
 print_success "All prerequisites met"
 
-# Check if terraform.tfvars exists
-if [ ! -f "terraform.tfvars" ]; then
-    print_warning "terraform.tfvars not found. Creating from example..."
-    cp terraform.tfvars.example terraform.tfvars
-    print_error "Please edit terraform.tfvars with your values and run this script again"
-    print_warning "Required changes:"
-    echo "  - ssh_key_name: Your AWS key pair name"
-    echo "  - allowed_ssh_cidr: Your IP address"
-    exit 1
-fi
 
 # Initialize Terraform
 print_status "Initializing Terraform..."
