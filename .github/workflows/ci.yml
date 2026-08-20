@@ -55,11 +55,11 @@ jobs:
         run: npm ci
 
       - name: Frontend syntax checks
-        working-directory: frontend
+        working-directory: app/frontend
         run: node --check server.js
 
       - name: Frontend smoke test
-        working-directory: frontend
+        working-directory: app/frontend
         run: |
           node server.js &
           SERVER_PID=$!
