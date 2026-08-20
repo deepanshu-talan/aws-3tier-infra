@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goal Tracker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #38bdf8;
+            --primary-dark: #0ea5e9;
+            --primary-light: #7dd3fc;
+            --secondary: #7dd3fc;
+            --secondary-dark: #38bdf8;
+            --secondary-light: rgba(125, 211, 252, 0.15);
+            --accent: #0ea5e9;
+            --text: #f8fafc;
+            --text-light: #94a3b8;
+            --bg: #0a0e1a;
+            --card-bg: rgba(15, 22, 41, 0.5);
+            --border: rgba(56, 189, 248, 0.6);
+            --success: #22c55e;
+            --danger: #ef4444;
+            --ring: rgba(14, 165, 233, 0.9);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(
+                165deg,
+                #0a0e1a 0%,
+                #0f1629 30%,
+                #09090b 70%,
+                #000000 100%
+            );
+            background-attachment: fixed;
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 30px;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 24px;
+            border: 1px solid var(--border);
+            box-shadow:
+                0 18px 45px rgba(0, 0, 0, 0.35),
+                0 0 28px rgba(14, 165, 233, 0.12),
+                0 1px 2px rgba(125, 211, 252, 0.18) inset;
+            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            will-change: transform, box-shadow;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 49%, rgba(56, 189, 248, 0.06) 50%, transparent 51%);
+            background-size: 20px 20px;
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 40px;
+            position: relative;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(56, 189, 248, 0.28);
+        }
+
+        .logo {
+            width: 50px;
+            height: 50px;
+            margin-right: 15px;
+            border-radius: 15px;
+            background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+            box-shadow:
+                0 4px 15px rgba(14, 165, 233, 0.3),
+                0 0 20px rgba(56, 189, 248, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: pulse-glow 2s infinite;
+            will-change: transform, box-shadow;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .logo::before {
+            content: '';
+            width: 22px;
+            height: 12px;
+            border-left: 4px solid #f8fafc;
+            border-bottom: 4px solid #f8fafc;
+            transform: rotate(-45deg) translate(1px, -2px);
+            border-radius: 2px;
+            z-index: 1;
+        }
+
+        .logo::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                to bottom right,
+                rgba(248, 250, 252, 0) 0%,
+                rgba(248, 250, 252, 0.16) 50%,
+                rgba(248, 250, 252, 0) 100%
+            );
+            transform: rotate(45deg);
+            animation: shine 3s infinite;
+        }
+
+        @keyframes shine {
+            0% { transform: translateX(-100%) rotate(45deg); }
+            20%, 100% { transform: translateX(100%) rotate(45deg); }
+        }
+
+        @keyframes pulse-glow {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 4px 15px rgba(14, 165, 233, 0.3);
+            }
+            50% {
+                transform: scale(1.05);
+                box-shadow: 0 4px 20px rgba(14, 165, 233, 0.45), 0 0 25px rgba(56, 189, 248, 0.35);
+            }
+            100% {
+                transform: scale(1);
+                box-shadow: 0 4px 15px rgba(14, 165, 233, 0.3);
+            }
+        }
+
+        h2 {
+            background: linear-gradient(90deg, #38bdf8, #7dd3fc, #0ea5e9);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            font-weight: 600;
+            font-size: 28px;
+            text-align: center;
+            text-shadow: 0 2px 10px rgba(14, 165, 233, 0.18);
+            letter-spacing: 0.5px;
+            position: relative;
+        }
+
+        .input-group {
+            display: flex;
+            margin-bottom: 30px;
+            background: var(--card-bg);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.18);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border);
+        }
+
+        .input-group:focus-within {
+            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2), 0 8px 25px rgba(14, 165, 233, 0.16);
+            transform: translateY(-2px);
+            border-color: var(--primary);
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 15px 20px;
+            font-size: 16px;
+            border: none;
+            outline: none;
+            font-family: inherit;
+            transition: all 0.3s ease;
+            background-color: transparent;
+            color: var(--text);
+        }
+
+        input[type="text"]::placeholder {
+            color: var(--text-light);
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus::placeholder {
+            opacity: 0.7;
+            transform: translateX(5px);
+        }
+
+        .add-btn {
+            padding: 0 25px;
+            background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+            color: #f8fafc;
+            border: none;
+            font-weight: 500;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            position: relative;
+            overflow: hidden;
+            z-index: 1;
+            box-shadow: 0 0 20px rgba(14, 165, 233, 0.25);
+        }
+
+        .add-btn:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 6px 20px rgba(14, 165, 233, 0.34);
+        }
+
+        .add-btn:active {
+            transform: translateY(1px) scale(0.98);
+        }
+
+        .add-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+            z-index: -1;
+            transition: all 0.4s ease;
+            transform: scaleX(0);
+            transform-origin: right;
+        }
+
+        .add-btn:hover::before {
+            transform: scaleX(1);
+            transform-origin: left;
+        }
+
+        .add-btn::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 5px;
+            height: 5px;
+            background: rgba(248, 250, 252, 0.7);
+            opacity: 0;
+            border-radius: 100%;
+            transform: scale(1, 1) translate(-50%);
+            transform-origin: 50% 50%;
+            will-change: transform, opacity;
+        }
+
+        .add-btn:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2), 0 0 20px rgba(14, 165, 233, 0.25);
+        }
+
+        .add-btn:focus:not(:active)::after {
+            animation: ripple-enhanced 0.6s ease-out;
+        }
+
+        @keyframes ripple-enhanced {
+            0% {
+                transform: scale(0, 0);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(25, 25);
+                opacity: 0;
+            }
+        }
+
+        .goal-item {
+            background-color: var(--card-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            margin: 20px 0;
+            padding: 20px 24px;
+            border-radius: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--primary);
+            box-shadow:
+                0 5px 15px rgba(0, 0, 0, 0.18),
+                0 1px 1px rgba(125, 211, 252, 0.08) inset;
+            animation: slideIn 0.5s ease-out;
+            will-change: transform, opacity;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .goal-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                to right,
+                transparent 0%,
+                rgba(56, 189, 248, 0.08) 50%,
+                transparent 100%
+            );
+            transition: all 0.8s ease;
+        }
+
+        .goal-item:hover::before {
+            left: 100%;
+        }
+
+        .goal-item:hover {
+            transform: translateY(-5px) scale(1.01);
+            box-shadow: 0 10px 24px rgba(14, 165, 233, 0.18);
+            background-color: rgba(15, 22, 41, 0.68);
+            border-color: var(--primary);
+            border-left-color: var(--accent);
+        }
+
+        .goal-text {
+            color: var(--text);
+            padding-right: 16px;
+        }
+
+        .delete-button {
+            background: rgba(239, 68, 68, 0.16);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            color: #fee2e2;
+            border: 1px solid rgba(239, 68, 68, 0.6);
+            padding: 10px 22px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-origin: center;
+            will-change: transform;
+            box-shadow: 0 4px 10px rgba(239, 68, 68, 0.16);
+            position: relative;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        .delete-button:hover {
+            background: rgba(239, 68, 68, 0.28);
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 6px 15px rgba(239, 68, 68, 0.28);
+        }
+
+        .delete-button:active {
+            transform: scale(0.95) translateY(2px);
+        }
+
+        .delete-button:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22), 0 6px 15px rgba(239, 68, 68, 0.28);
+        }
+
+        .delete-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, rgba(239, 68, 68, 0.5), rgba(239, 68, 68, 0.22));
+            z-index: -1;
+            transition: all 0.4s ease;
+            transform: scaleY(0);
+            transform-origin: bottom;
+        }
+
+        .delete-button:hover::before {
+            transform: scaleY(1);
+        }
+
+        .success-message {
+            background-color: rgba(34, 197, 94, 0.12);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            color: var(--success);
+            padding: 14px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            text-align: center;
+            opacity: 0;
+            transform: translateY(-15px);
+            animation: success-slide-in 0.5s ease forwards;
+            display: none;
+            will-change: opacity, transform;
+            border: 1px solid rgba(34, 197, 94, 0.36);
+            box-shadow: 0 5px 15px rgba(34, 197, 94, 0.16);
+            font-weight: 500;
+        }
+
+        @keyframes success-slide-in {
+            0% {
+                opacity: 0;
+                transform: translateY(-15px) scale(0.95);
+            }
+            70% {
+                transform: translateY(2px) scale(1.02);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-light);
+            padding: 50px 0;
+            animation: fadeIn 1s ease-out;
+            background-color: var(--card-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 16px;
+            margin: 20px 0;
+            border: 1px dashed var(--border);
+            will-change: opacity;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.18);
+        }
+
+        .empty-state p {
+            position: relative;
+            animation: subtle-bounce 3s ease-in-out infinite;
+        }
+
+        @keyframes subtle-bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        footer {
+            text-align: center;
+            margin: 40px auto 20px;
+            padding: 15px 20px;
+            color: var(--text-light);
+            font-size: 14px;
+            animation: fadeIn 1.2s ease-out;
+            max-width: 800px;
+            background-color: rgba(15, 22, 41, 0.42);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 30px;
+            border: 1px solid rgba(56, 189, 248, 0.28);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @media (max-width: 640px) {
+            .container {
+                width: calc(100% - 24px);
+                margin: 24px auto;
+                padding: 22px;
+            }
+
+            .header {
+                align-items: flex-start;
+            }
+
+            h2 {
+                font-size: 23px;
+                line-height: 1.25;
+            }
+
+            .input-group {
+                flex-direction: column;
+            }
+
+            .add-btn {
+                min-height: 48px;
+            }
+
+            .goal-item {
+                gap: 14px;
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo" aria-hidden="true"></div>
+            <h2>Track Your Goals</h2>
+        </div>
+        
+        <form id="goal-form">
+            <div class="input-group">
+                <input type="text" name="goal_name" placeholder="Enter your next goal..." required>
+                <button type="submit" class="add-btn">Add Goal</button>
+            </div>
+            <div id="success-message" class="success-message">Goal added successfully!</div>
+        </form>
+        
+        <ul class="goal-list" id="goal-list" style="display: none;"></ul>
+        <div class="empty-state" id="empty-state">
+            <p>No goals yet. Add your first goal above!</p>
+        </div>
+    </div>
+
+    <footer>
+        Goal Tracker
+    </footer>
+    
+    <script>
+        // Load goals when the page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadGoals();
+        });
+
+        // Function to load goals from the API
+        function loadGoals() {
+            fetch('/api/goals')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.goals && data.goals.length > 0) {
+                        displayGoals(data.goals);
+                    } else {
+                        document.getElementById('goal-list').style.display = 'none';
+                        document.getElementById('empty-state').style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading goals:', error);
+                });
+        }
+
+        // Function to display goals in the UI
+        function displayGoals(goals) {
+            const goalsList = document.getElementById('goal-list');
+            goalsList.innerHTML = '';
+            
+            goals.forEach(goal => {
+                const goalItem = document.createElement('li');
+                goalItem.className = 'goal-item';
+                goalItem.innerHTML = `
+                    <span class="goal-text">${goal.Name}</span>
+                    <button class="delete-button" data-id="${goal.ID}">Remove</button>
+                `;
+                goalsList.appendChild(goalItem);
+            });
+            
+            document.getElementById('goal-list').style.display = 'block';
+            document.getElementById('empty-state').style.display = 'none';
+            
+            // Add event listeners to delete buttons
+            document.querySelectorAll('.delete-button').forEach(button => {
+                button.addEventListener('click', deleteGoal);
+            });
+        }
+
+        // Add goal form handling
+        document.getElementById('goal-form').addEventListener('submit', function(e) {
+            e.preventDefault(); // Prevent the standard form submission
+            
+            const button = this.querySelector('button');
+            const originalText = button.textContent;
+            button.textContent = 'Processing...';
+            
+            // Get form data
+            const goalNameInput = this.querySelector('input[name="goal_name"]');
+            const goalName = goalNameInput.value;
+            
+            // Send API request
+            fetch('/api/goals', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ goal_name: goalName })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Show success message
+                const successMsg = document.getElementById('success-message');
+                successMsg.style.display = 'block';
+                
+                // Reload goals to display the updated list
+                loadGoals();
+                
+                // Reset the form
+                goalNameInput.value = '';
+                
+                // Hide success message after 3 seconds
+                setTimeout(() => {
+                    successMsg.style.display = 'none';
+                }, 3000);
+                
+                // Reset button text
+                button.textContent = originalText;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                button.textContent = originalText;
+            });
+        });
+
+        // Function to handle goal deletion
+        function deleteGoal(e) {
+            const goalId = e.target.dataset.id;
+            const originalText = e.target.textContent;
+            e.target.textContent = 'Removing...';
+            e.target.disabled = true;
+            
+            fetch(`/api/goals/${goalId}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Find and remove the goal item
+                    const goalItem = e.target.closest('.goal-item');
+                    goalItem.style.opacity = '0';
+                    goalItem.style.transform = 'translateX(20px)';
+                    
+                    // After animation completes, remove the element
+                    setTimeout(() => {
+                        goalItem.remove();
+                        
+                        // Check if there are any goals left
+                        if (document.querySelectorAll('.goal-item').length === 0) {
+                            document.getElementById('goal-list').style.display = 'none';
+                            document.getElementById('empty-state').style.display = 'block';
+                        }
+                    }, 300);
+                } else {
+                    alert('Failed to remove goal: ' + (data.error || 'Unknown error'));
+                    e.target.textContent = originalText;
+                    e.target.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while removing the goal');
+                e.target.textContent = originalText;
+                e.target.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html>
