@@ -9,7 +9,7 @@ RUN npm install
 COPY . .
 
 # Production stage using distroless
-FROM gcr.io/distroless/nodejs:24
+FROM gcr.io/distroless/nodejs:24-alpine
 
 WORKDIR /app
 
