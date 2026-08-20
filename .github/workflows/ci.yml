@@ -68,7 +68,7 @@ jobs:
           curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/
 
       - name: Frontend build
-        run: docker build -t frontend-ci:${{ github.sha }} ./frontend
+        run: docker build -t frontend-ci:${{ github.sha }} ./app/frontend
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
