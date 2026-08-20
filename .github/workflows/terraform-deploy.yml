@@ -1,0 +1,198 @@
+name: Terraform Plan and Apply
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+
+env:
+  TF_WORKING_DIR: terraform-infra/environments/dev
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_VAR_region: ${{ vars.AWS_REGION }}
+  TF_VAR_hosted_zone_name: ${{ vars.HOSTED_ZONE_NAME }}
+  TF_VAR_app_domain_name: ${{ vars.APP_DOMAIN_NAME }}
+  TF_VAR_terraform_state_bucket_name: ${{ vars.TF_STATE_BUCKET }}
+  TF_VAR_alarm_notification_email: ${{ secrets.ALARM_NOTIFICATION_EMAIL }}
+  TF_VAR_dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+  TF_VAR_dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set deployment image tags
+        run: |
+          echo "FRONTEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-frontend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "BACKEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-backend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "TF_VAR_frontend_docker_image=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-frontend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "TF_VAR_backend_docker_image=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-backend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false \
+            -backend-config=backend.hcl \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Upload saved Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-tfplan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          if-no-files-found: error
+
+  terraform-apply:
+    name: Terraform Apply and Deploy
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set deployment image tags
+        run: |
+          echo "FRONTEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-frontend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "BACKEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-backend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "TF_VAR_frontend_docker_image=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-frontend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "TF_VAR_backend_docker_image=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-backend:${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+
+      - name: Download saved Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-tfplan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false \
+            -backend-config=backend.hcl \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform apply saved plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -input=false tfplan
+
+      - name: Deploy application with existing SSM flow
+        env:
+          FRONTEND_IMAGE_TAG: ${{ env.FRONTEND_IMAGE_TAG }}
+          BACKEND_IMAGE_TAG: ${{ env.BACKEND_IMAGE_TAG }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: bash scripts/deploy-ec2-ssm.sh
+
+      - name: Post-deployment verification
+        env:
+          APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
+        run: |
+          set -euo pipefail
+          cd "$TF_WORKING_DIR"
+
+          FRONTEND_URL="https://${APP_DOMAIN_NAME}"
+          if [ -z "${APP_DOMAIN_NAME}" ]; then
+            FRONTEND_URL="$(terraform output -raw application_url)"
+          fi
+
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error --max-time 15 "$FRONTEND_URL"; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "Frontend verification failed at $FRONTEND_URL"
+              exit 1
+            fi
+            sleep 15
+          done
+
+          verify_service_on_asg() {
+            local asg_name="$1"
+            local service_name="$2"
+            local health_url="$3"
+            local instance_ids
+            local command_id
+            local commands_file
+
+            instance_ids="$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$asg_name" \
+              --region "$AWS_REGION" \
+              --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'].InstanceId" \
+              --output text)"
+
+            if [ -z "$instance_ids" ]; then
+              echo "No InService instances found for $asg_name"
+              exit 1
+            fi
+
+            commands_file="$(mktemp)"
+            printf '{"commands":["set -euo pipefail","docker ps --filter name=%s --format {{.Names}} | grep -x %s","curl --fail --silent --show-error --max-time 15 %s"]}\n' \
+              "$service_name" \
+              "$service_name" \
+              "$health_url" > "$commands_file"
+
+            command_id="$(aws ssm send-command \
+              --document-name "AWS-RunShellScript" \
+              --comment "Verify $service_name container and health endpoint" \
+              --instance-ids $instance_ids \
+              --parameters "file://$commands_file" \
+              --region "$AWS_REGION" \
+              --query "Command.CommandId" \
+              --output text)"
+            rm -f "$commands_file"
+
+            for instance_id in $instance_ids; do
+              aws ssm wait command-executed \
+                --command-id "$command_id" \
+                --instance-id "$instance_id" \
+                --region "$AWS_REGION"
+            done
+          }
+
+          FRONTEND_ASG="$(terraform output -raw frontend_asg_name)"
+          BACKEND_ASG="$(terraform output -raw backend_asg_name)"
+
+          verify_service_on_asg "$FRONTEND_ASG" "goal-tracker-frontend" "http://localhost:3000/"
+          verify_service_on_asg "$BACKEND_ASG" "goal-tracker-backend" "http://localhost:8080/health"

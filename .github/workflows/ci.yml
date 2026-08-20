@@ -1,4 +1,4 @@
-name: Application CI
+name: CI
 
 on:
   pull_request:
@@ -8,65 +8,166 @@ on:
     branches:
       - main
 
+env:
+  TF_WORKING_DIR: terraform-infra/environments/dev
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_VAR_region: ${{ vars.AWS_REGION }}
+  TF_VAR_hosted_zone_name: ${{ vars.HOSTED_ZONE_NAME }}
+  TF_VAR_app_domain_name: ${{ vars.APP_DOMAIN_NAME }}
+  TF_VAR_terraform_state_bucket_name: ${{ vars.TF_STATE_BUCKET }}
+  TF_VAR_alarm_notification_email: ${{ secrets.ALARM_NOTIFICATION_EMAIL }}
+  TF_VAR_dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+  TF_VAR_dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+
 jobs:
-  application-tests:
-    name: Backend & Frontend Tests
+  checks:
+    name: Tests, Lint, Validate, Security
+    environment: dev
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Backend
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
-          cache: true
-          cache-dependency-path: app/backend/go.sum
+          cache-dependency-path: backend/go.sum
 
       - name: Run backend tests
-        working-directory: app/backend
+        working-directory: backend
         run: go test ./...
 
-      # Frontend
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: app/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: app/frontend
+        working-directory: frontend
         run: npm ci
 
-      - name: Frontend syntax check
-        working-directory: app/frontend
+      - name: Frontend syntax checks
+        working-directory: frontend
         run: node --check server.js
 
       - name: Frontend smoke test
-        working-directory: app/frontend
+        working-directory: frontend
         run: |
           node server.js &
           SERVER_PID=$!
+          trap "kill $SERVER_PID" EXIT
+          sleep 5
+          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/
 
-          trap 'kill $SERVER_PID' EXIT
+      - name: Frontend build
+        run: docker build -t frontend-ci:${{ github.sha }} ./frontend
 
-          for i in {1..10}; do
-            if curl --fail --silent --show-error --max-time 5 \
-              http://127.0.0.1:3000/; then
-              exit 0
-            fi
-            sleep 2
-          done
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-          echo "Frontend failed to respond"
-          exit 1
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      # Docker build validation
-      - name: Build frontend Docker image
-        run: docker build -t frontend-ci:${{ github.sha }} ./app/frontend
+      - name: Terraform fmt
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive ../..
 
-      - name: Build backend Docker image
-        run: docker build -t backend-ci:${{ github.sha }} ./app/backend
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false \
+            -backend-config=backend.hcl \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Run TFLint
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          tflint --init
+          tflint --recursive
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy IaC scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: terraform-infra
+          trivyignores: terraform-infra/.trivyignore
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+  docker-build-scan-push:
+    name: Docker Build, Scan, Push
+    if: github.event_name == 'push'
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tags
+        run: |
+          echo "FRONTEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-frontend:${{ github.sha }}" >> "$GITHUB_ENV"
+          echo "BACKEND_IMAGE_TAG=${{ secrets.DOCKERHUB_USERNAME }}/goal-tracker-backend:${{ github.sha }}" >> "$GITHUB_ENV"
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build frontend image
+        run: docker build -t "$FRONTEND_IMAGE_TAG" ./frontend
+
+      - name: Build backend image
+        run: docker build -t "$BACKEND_IMAGE_TAG" ./backend
+
+      - name: Trivy scan frontend image
+        uses: aquasecurity/trivy-action@0.25.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE_TAG }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Trivy scan backend image
+        uses: aquasecurity/trivy-action@0.25.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE_TAG }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Push frontend image
+        run: docker push "$FRONTEND_IMAGE_TAG"
+
+      - name: Push backend image
+        run: docker push "$BACKEND_IMAGE_TAG"

@@ -1,0 +1,137 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DESTROY to confirm infrastructure destruction"
+        required: true
+        type: string
+
+env:
+  TF_WORKING_DIR: terraform-infra/environments/dev
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_VAR_region: ${{ vars.AWS_REGION }}
+  TF_VAR_hosted_zone_name: ${{ vars.HOSTED_ZONE_NAME }}
+  TF_VAR_app_domain_name: ${{ vars.APP_DOMAIN_NAME }}
+  TF_VAR_terraform_state_bucket_name: ${{ vars.TF_STATE_BUCKET }}
+  TF_VAR_alarm_notification_email: ${{ secrets.ALARM_NOTIFICATION_EMAIL }}
+  TF_VAR_dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+  TF_VAR_dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+jobs:
+  confirm-destroy:
+    name: Confirm destroy intent
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate explicit confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "DESTROY" ]; then
+            echo "Invalid confirmation value. Type DESTROY to proceed."
+            exit 1
+          fi
+
+  destroy-plan:
+    name: Plan destroy
+    needs: confirm-destroy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify expected AWS account and region
+        run: |
+          set -euo pipefail
+          EXPECTED_ACCOUNT_ID="$(echo "${{ secrets.AWS_ROLE_TO_ASSUME }}" | cut -d: -f5)"
+          ACTUAL_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          if [ "$ACTUAL_ACCOUNT_ID" != "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "AWS account verification failed. Expected $EXPECTED_ACCOUNT_ID, got $ACTUAL_ACCOUNT_ID."
+            exit 1
+          fi
+          if [ -z "${AWS_REGION}" ]; then
+            echo "AWS_REGION is empty."
+            exit 1
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false \
+            -backend-config=backend.hcl \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform destroy plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -destroy -input=false -out=destroy.tfplan
+
+      - name: Upload saved destroy plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-destroy-tfplan
+          path: ${{ env.TF_WORKING_DIR }}/destroy.tfplan
+          if-no-files-found: error
+
+  destroy-apply:
+    name: Apply destroy plan
+    needs: destroy-plan
+    runs-on: ubuntu-latest
+    environment: production-destroy
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download saved destroy plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-destroy-tfplan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false \
+            -backend-config=backend.hcl \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform apply saved destroy plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -input=false destroy.tfplan
+
+      - name: Post-destroy verification
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          remaining_resources="$(terraform state list)"
+          if [ -n "$remaining_resources" ]; then
+            echo "Destroy verification failed. Remaining Terraform resources:"
+            echo "$remaining_resources"
+            exit 1
+          fi
