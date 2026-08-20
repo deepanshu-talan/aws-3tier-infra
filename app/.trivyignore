@@ -1,0 +1,4 @@
+# No fixed package available in the current Debian base image.
+# Re-evaluate when an upstream fix is available.
+
+CVE-2026-14456

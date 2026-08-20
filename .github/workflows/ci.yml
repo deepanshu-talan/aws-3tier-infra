@@ -157,6 +157,7 @@ jobs:
         with:
           image-ref: ${{ env.FRONTEND_IMAGE_TAG }}
           format: table
+          trivyignores: app/.trivyignore
           exit-code: "1"
           severity: HIGH,CRITICAL
 
@@ -165,6 +166,7 @@ jobs:
         with:
           image-ref: ${{ env.BACKEND_IMAGE_TAG }}
           format: table
+          trivyignores: app/.trivyignore
           exit-code: "1"
           severity: HIGH,CRITICAL
 
