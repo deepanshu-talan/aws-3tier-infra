@@ -123,11 +123,13 @@ jobs:
 
   docker-build-scan-push:
     name: Docker Build, Scan, Push
+    environment: dev
     if: github.event_name == 'push'
     needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
 
     steps:
       - name: Checkout
