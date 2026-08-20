@@ -147,10 +147,10 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build frontend image
-        run: docker build -t "$FRONTEND_IMAGE_TAG" ./frontend
+        run: docker build -t "$FRONTEND_IMAGE_TAG" ./app/frontend
 
       - name: Build backend image
-        run: docker build -t "$BACKEND_IMAGE_TAG" ./backend
+        run: docker build -t "$BACKEND_IMAGE_TAG" ./app/backend
 
       - name: Trivy scan frontend image
         uses: aquasecurity/trivy-action@v0.36.0
