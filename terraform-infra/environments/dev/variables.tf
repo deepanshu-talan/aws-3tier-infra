@@ -5,10 +5,6 @@ variable "region" {
   default     = "ap-south-1"
 }
 
-variable "TF_STATE_BUCKET" {
-  type = string
-  default = "terraform-remote-state-960882269528-ap-south-1-an"
-}
 
 variable "environment" {
   description = "Environment name"
