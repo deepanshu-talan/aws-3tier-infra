@@ -1,0 +1,13 @@
+# Trivy ignore rules for 3-tier architecture
+# These rules are intentional and should not be flagged as security issues
+
+# Public ALB is intentional; this is the internet-facing frontend ALB
+AWS-0053
+
+# Internal ALB is intentional; this serves the backend (or can be used for other internal services)
+AWS-0104
+
+# HTTP listener exists only to redirect clients to HTTPS (in secure config)
+AWS-0054
+
+# These are for dev/tests only, not production
