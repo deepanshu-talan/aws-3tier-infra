@@ -15,9 +15,6 @@ TF_WORKING_DIR="${TF_WORKING_DIR:-terraform-infra/environments/dev}"
 FRONTEND_CONTAINER="goal-tracker-frontend"
 BACKEND_CONTAINER="goal-tracker-backend"
 
-FRONTEND_PORT="3000"
-BACKEND_PORT="8080"
-
 echo "============================================================"
 echo "Starting application deployment"
 echo "============================================================"
@@ -27,7 +24,7 @@ echo "AWS region    : ${AWS_REGION}"
 echo "============================================================"
 
 # ------------------------------------------------------------
-# Terraform outputs
+# Read Terraform outputs
 # ------------------------------------------------------------
 
 cd "${TF_WORKING_DIR}"
@@ -39,13 +36,33 @@ BACKEND_ASG="$(terraform output -raw backend_asg_name)"
 INTERNAL_ALB="$(terraform output -raw internal_alb_dns_name)"
 DB_SECRET_NAME="$(terraform output -raw db_secret_name)"
 
+if [[ -z "${FRONTEND_ASG}" ]]; then
+    echo "ERROR: frontend_asg_name output is empty."
+    exit 1
+fi
+
+if [[ -z "${BACKEND_ASG}" ]]; then
+    echo "ERROR: backend_asg_name output is empty."
+    exit 1
+fi
+
+if [[ -z "${INTERNAL_ALB}" ]]; then
+    echo "ERROR: internal_alb_dns_name output is empty."
+    exit 1
+fi
+
+if [[ -z "${DB_SECRET_NAME}" ]]; then
+    echo "ERROR: db_secret_name output is empty."
+    exit 1
+fi
+
 echo "Frontend ASG : ${FRONTEND_ASG}"
 echo "Backend ASG  : ${BACKEND_ASG}"
 echo "Internal ALB : ${INTERNAL_ALB}"
 echo "DB secret    : ${DB_SECRET_NAME}"
 
 # ------------------------------------------------------------
-# Get InService instances
+# Get InService EC2 instances
 # ------------------------------------------------------------
 
 get_instances() {
@@ -59,7 +76,7 @@ get_instances() {
 }
 
 # ------------------------------------------------------------
-# Wait for SSM command
+# Wait for SSM command on all instances
 # ------------------------------------------------------------
 
 wait_for_command() {
@@ -70,8 +87,9 @@ wait_for_command() {
     local failed=0
 
     for instance_id in ${instance_ids}; do
+
         echo ""
-        echo "Waiting for ${service_name} on ${instance_id}..."
+        echo "Waiting for ${service_name} deployment on ${instance_id}..."
 
         if aws ssm wait command-executed \
             --command-id "${command_id}" \
@@ -136,44 +154,72 @@ deploy_backend() {
     echo "${instance_ids}"
 
     local commands_file
-    commands_file="$(mktemp)"
+    local parameters_file
+    local command_id
 
-    # IMPORTANT:
-    # This heredoc is quoted so DB_USERNAME etc. are NOT expanded
-    # on the GitHub runner. They will be expanded on the EC2 host.
+    commands_file="$(mktemp)"
+    parameters_file="$(mktemp)"
+
+    # --------------------------------------------------------
+    # Create commands that will execute ON EC2.
+    #
+    # Important:
+    # This heredoc is quoted so DB_USERNAME, DB_PASSWORD etc.
+    # are NOT expanded on the GitHub runner.
+    # --------------------------------------------------------
+
     cat > "${commands_file}" <<'SSM_COMMANDS'
 set -euo pipefail
 
-echo "Pulling backend Docker image..."
+echo "============================================================"
+echo "Backend deployment started"
+echo "============================================================"
+
+echo "Pulling backend image..."
 
 docker pull "__BACKEND_IMAGE_TAG__"
 
-echo "Retrieving database credentials..."
+echo "Retrieving database credentials from Secrets Manager..."
 
 SECRET="$(aws secretsmanager get-secret-value \
-  --secret-id "__DB_SECRET_NAME__" \
-  --region "__AWS_REGION__" \
-  --query SecretString \
-  --output text)"
+    --secret-id "__DB_SECRET_NAME__" \
+    --region "__AWS_REGION__" \
+    --query SecretString \
+    --output text)"
 
-if [ -z "$SECRET" ]; then
-  echo "ERROR: Could not retrieve database secret."
-  exit 1
+if [[ -z "${SECRET}" ]]; then
+    echo "ERROR: Database secret is empty."
+    exit 1
 fi
 
-DB_USERNAME="$(echo "$SECRET" | jq -r '.username')"
-DB_PASSWORD="$(echo "$SECRET" | jq -r '.password')"
-DB_HOST="$(echo "$SECRET" | jq -r '.host')"
-DB_PORT="$(echo "$SECRET" | jq -r '.port')"
-DB_NAME="$(echo "$SECRET" | jq -r '.dbname')"
+DB_USERNAME="$(echo "${SECRET}" | jq -r '.username')"
+DB_PASSWORD="$(echo "${SECRET}" | jq -r '.password')"
+DB_HOST="$(echo "${SECRET}" | jq -r '.host')"
+DB_PORT="$(echo "${SECRET}" | jq -r '.port')"
+DB_NAME="$(echo "${SECRET}" | jq -r '.dbname')"
 
-if [ -z "$DB_USERNAME" ] ||
-   [ -z "$DB_PASSWORD" ] ||
-   [ -z "$DB_HOST" ] ||
-   [ -z "$DB_PORT" ] ||
-   [ -z "$DB_NAME" ]; then
+if [[ -z "${DB_USERNAME}" || "${DB_USERNAME}" == "null" ]]; then
+    echo "ERROR: DB_USERNAME is missing."
+    exit 1
+fi
 
-    echo "ERROR: Required database configuration is missing."
+if [[ -z "${DB_PASSWORD}" || "${DB_PASSWORD}" == "null" ]]; then
+    echo "ERROR: DB_PASSWORD is missing."
+    exit 1
+fi
+
+if [[ -z "${DB_HOST}" || "${DB_HOST}" == "null" ]]; then
+    echo "ERROR: DB_HOST is missing."
+    exit 1
+fi
+
+if [[ -z "${DB_PORT}" || "${DB_PORT}" == "null" ]]; then
+    echo "ERROR: DB_PORT is missing."
+    exit 1
+fi
+
+if [[ -z "${DB_NAME}" || "${DB_NAME}" == "null" ]]; then
+    echo "ERROR: DB_NAME is missing."
     exit 1
 fi
 
@@ -190,29 +236,34 @@ docker rm "__BACKEND_CONTAINER__" || true
 echo "Starting new backend container..."
 
 docker run -d \
-  --name "__BACKEND_CONTAINER__" \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -e DB_USERNAME="$DB_USERNAME" \
-  -e DB_PASSWORD="$DB_PASSWORD" \
-  -e DB_HOST="$DB_HOST" \
-  -e DB_PORT="$DB_PORT" \
-  -e DB_NAME="$DB_NAME" \
-  -e SSL=require \
-  -e PORT=8080 \
-  "__BACKEND_IMAGE_TAG__"
+    --name "__BACKEND_CONTAINER__" \
+    --restart unless-stopped \
+    -p 8080:8080 \
+    -e DB_USERNAME="${DB_USERNAME}" \
+    -e DB_PASSWORD="${DB_PASSWORD}" \
+    -e DB_HOST="${DB_HOST}" \
+    -e DB_PORT="${DB_PORT}" \
+    -e DB_NAME="${DB_NAME}" \
+    -e SSL=require \
+    -e PORT=8080 \
+    "__BACKEND_IMAGE_TAG__"
 
-echo "Waiting for backend..."
+echo "Waiting for backend to start..."
 
 sleep 15
 
 if ! docker ps --format '{{.Names}}' | grep -qx "__BACKEND_CONTAINER__"; then
+
     echo "ERROR: Backend container is not running."
+
+    docker ps -a || true
+
     docker logs "__BACKEND_CONTAINER__" || true
+
     exit 1
 fi
 
-echo "Checking backend..."
+echo "Checking backend endpoint..."
 
 for attempt in $(seq 1 30); do
 
@@ -229,6 +280,7 @@ for attempt in $(seq 1 30); do
     fi
 
     echo "Backend not ready. Attempt ${attempt}/30"
+
     sleep 2
 
 done
@@ -240,7 +292,10 @@ docker logs "__BACKEND_CONTAINER__" || true
 exit 1
 SSM_COMMANDS
 
-    # Replace placeholders AFTER creating the SSM script.
+    # --------------------------------------------------------
+    # Replace only deployment-specific placeholders.
+    # --------------------------------------------------------
+
     sed -i \
         -e "s|__BACKEND_IMAGE_TAG__|${BACKEND_IMAGE_TAG}|g" \
         -e "s|__DB_SECRET_NAME__|${DB_SECRET_NAME}|g" \
@@ -248,20 +303,38 @@ SSM_COMMANDS
         -e "s|__BACKEND_CONTAINER__|${BACKEND_CONTAINER}|g" \
         "${commands_file}"
 
-    local command_id
+    # --------------------------------------------------------
+    # Convert commands file into SSM parameters JSON.
+    #
+    # This is the important fix:
+    #
+    # WRONG:
+    #   commands=file:///tmp/...
+    #
+    # CORRECT:
+    #   {"commands":["command1","command2",...]}
+    # --------------------------------------------------------
+
+    jq -n \
+        --rawfile commands "${commands_file}" \
+        '{commands: ($commands | split("\n") | map(select(length > 0)))}' \
+        > "${parameters_file}"
+
+    echo ""
+    echo "Sending backend deployment command through SSM..."
 
     command_id="$(
         aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy backend ${BACKEND_IMAGE_TAG}" \
             --instance-ids ${instance_ids} \
-            --parameters "commands=file://${commands_file}" \
+            --parameters "file://${parameters_file}" \
             --region "${AWS_REGION}" \
             --query "Command.CommandId" \
             --output text
     )"
 
-    rm -f "${commands_file}"
+    rm -f "${commands_file}" "${parameters_file}"
 
     echo "Backend SSM command ID: ${command_id}"
 
@@ -296,15 +369,27 @@ deploy_frontend() {
     echo "${instance_ids}"
 
     local commands_file
+    local parameters_file
+    local command_id
+
     commands_file="$(mktemp)"
+    parameters_file="$(mktemp)"
 
     # Frontend talks to the internal ALB.
     BACKEND_URL="http://${INTERNAL_ALB}:8080"
 
+    # --------------------------------------------------------
+    # Commands that execute ON frontend EC2.
+    # --------------------------------------------------------
+
     cat > "${commands_file}" <<'SSM_COMMANDS'
 set -euo pipefail
 
-echo "Pulling frontend Docker image..."
+echo "============================================================"
+echo "Frontend deployment started"
+echo "============================================================"
+
+echo "Pulling frontend image..."
 
 docker pull "__FRONTEND_IMAGE_TAG__"
 
@@ -319,25 +404,30 @@ docker rm "__FRONTEND_CONTAINER__" || true
 echo "Starting new frontend container..."
 
 docker run -d \
-  --name "__FRONTEND_CONTAINER__" \
-  --restart unless-stopped \
-  -p 3000:3000 \
-  -e PORT=3000 \
-  -e BACKEND_URL="__BACKEND_URL__" \
-  -e NODE_ENV=production \
-  "__FRONTEND_IMAGE_TAG__"
+    --name "__FRONTEND_CONTAINER__" \
+    --restart unless-stopped \
+    -p 3000:3000 \
+    -e PORT=3000 \
+    -e BACKEND_URL="__BACKEND_URL__" \
+    -e NODE_ENV=production \
+    "__FRONTEND_IMAGE_TAG__"
 
-echo "Waiting for frontend..."
+echo "Waiting for frontend to start..."
 
 sleep 10
 
 if ! docker ps --format '{{.Names}}' | grep -qx "__FRONTEND_CONTAINER__"; then
+
     echo "ERROR: Frontend container is not running."
+
+    docker ps -a || true
+
     docker logs "__FRONTEND_CONTAINER__" || true
+
     exit 1
 fi
 
-echo "Checking frontend..."
+echo "Checking frontend endpoint..."
 
 for attempt in $(seq 1 30); do
 
@@ -354,6 +444,7 @@ for attempt in $(seq 1 30); do
     fi
 
     echo "Frontend not ready. Attempt ${attempt}/30"
+
     sleep 2
 
 done
@@ -365,26 +456,40 @@ docker logs "__FRONTEND_CONTAINER__" || true
 exit 1
 SSM_COMMANDS
 
+    # --------------------------------------------------------
+    # Replace deployment-specific placeholders.
+    # --------------------------------------------------------
+
     sed -i \
         -e "s|__FRONTEND_IMAGE_TAG__|${FRONTEND_IMAGE_TAG}|g" \
         -e "s|__FRONTEND_CONTAINER__|${FRONTEND_CONTAINER}|g" \
         -e "s|__BACKEND_URL__|${BACKEND_URL}|g" \
         "${commands_file}"
 
-    local command_id
+    # --------------------------------------------------------
+    # Convert commands into proper SSM JSON parameters.
+    # --------------------------------------------------------
+
+    jq -n \
+        --rawfile commands "${commands_file}" \
+        '{commands: ($commands | split("\n") | map(select(length > 0)))}' \
+        > "${parameters_file}"
+
+    echo ""
+    echo "Sending frontend deployment command through SSM..."
 
     command_id="$(
         aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy frontend ${FRONTEND_IMAGE_TAG}" \
             --instance-ids ${instance_ids} \
-            --parameters "commands=file://${commands_file}" \
+            --parameters "file://${parameters_file}" \
             --region "${AWS_REGION}" \
             --query "Command.CommandId" \
             --output text
     )"
 
-    rm -f "${commands_file}"
+    rm -f "${commands_file}" "${parameters_file}"
 
     echo "Frontend SSM command ID: ${command_id}"
 
@@ -396,9 +501,15 @@ SSM_COMMANDS
     echo "Frontend deployment completed."
 }
 
-# ------------------------------------------------------------
-# Deploy backend first, then frontend
-# ------------------------------------------------------------
+# ============================================================
+# Deployment order
+#
+# Backend first:
+#   frontend depends on backend.
+#
+# Frontend second:
+#   frontend uses backend internal ALB URL.
+# ============================================================
 
 deploy_backend
 deploy_frontend
@@ -407,6 +518,6 @@ echo ""
 echo "============================================================"
 echo "APPLICATION DEPLOYMENT SUCCESSFUL"
 echo "============================================================"
-echo "Frontend: ${FRONTEND_IMAGE_TAG}"
-echo "Backend : ${BACKEND_IMAGE_TAG}"
+echo "Frontend image: ${FRONTEND_IMAGE_TAG}"
+echo "Backend image : ${BACKEND_IMAGE_TAG}"
 echo "============================================================"
