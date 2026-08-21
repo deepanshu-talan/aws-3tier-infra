@@ -92,7 +92,6 @@ jobs:
     needs: destroy-plan
     environment: dev
     runs-on: ubuntu-latest
-    environment: production-destroy
     permissions:
       contents: read
       id-token: write
