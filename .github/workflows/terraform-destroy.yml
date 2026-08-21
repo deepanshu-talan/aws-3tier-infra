@@ -36,6 +36,7 @@ jobs:
   destroy-plan:
     name: Plan destroy
     needs: confirm-destroy
+    environment: dev
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -89,6 +90,7 @@ jobs:
   destroy-apply:
     name: Apply destroy plan
     needs: destroy-plan
+    environment: dev
     runs-on: ubuntu-latest
     environment: production-destroy
     permissions:
