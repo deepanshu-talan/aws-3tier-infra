@@ -437,10 +437,6 @@ The deployment references the image built from the same Git commit, preventing a
 
 ## Screenshots
 
-### Architecture
-
-![AWS Architecture](docs/images/aws-3tier-architecture.png)
-
 ### VPC
 
 ![VPC](docs/images/vpc.png)
