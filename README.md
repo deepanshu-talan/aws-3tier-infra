@@ -441,6 +441,10 @@ The deployment references the image built from the same Git commit, preventing a
 
 ![AWS Architecture](docs/images/aws-3tier-architecture.png)
 
+### VPC
+
+![VPC](docs/images/vpc.png)
+
 ### Application Load Balancer
 
 ![Application Load Balancer](docs/images/alb.png)
@@ -449,9 +453,17 @@ The deployment references the image built from the same Git commit, preventing a
 
 ![Auto Scaling](docs/images/autoscaling.png)
 
-### Systems Manager
+### RDS
 
-![Systems Manager](docs/images/systems-manager.png)
+![RDS](docs/images/rds.png)
+
+### WAF
+
+![WAF](docs/images/waf.png)
+
+### Sessions Manager
+
+![Systems Manager](docs/images/ssm.png)
 
 ### CloudWatch
 
@@ -465,7 +477,9 @@ The deployment references the image built from the same Git commit, preventing a
 
 ![SNS](docs/images/sns.png)
 
-> Keep the architecture diagram as the primary visual and add only screenshots that demonstrate an important implemented capability.
+### Deployed Application
+
+![Deployed Application](docs/images/deployed-application.png)
 
 ---
 
@@ -496,13 +510,7 @@ The deployment references the image built from the same Git commit, preventing a
 * Improve centralized log aggregation
 * Further automate disaster recovery testing
 
----
-
-## Project Focus
-
-This project demonstrates the evolution of a secure AWS VPC into a **highly available, scalable and observable 3-tier application platform**.
-
-The architecture focuses on:
+### Project Focus
 
 `Security` · `High Availability` · `Scalability` · `Observability` · `Automation` · `Least Privilege` · `Traceability`
 
