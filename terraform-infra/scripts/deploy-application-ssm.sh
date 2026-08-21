@@ -169,7 +169,7 @@ deploy_backend() {
     # --------------------------------------------------------
 
     cat > "${commands_file}" <<'SSM_COMMANDS'
-+#!/bin/bash
+#!/bin/bash
 set -euo pipefail
 
 echo "============================================================"
@@ -384,7 +384,7 @@ deploy_frontend() {
     # --------------------------------------------------------
 
     cat > "${commands_file}" <<'SSM_COMMANDS'
-+#!/bin/bash
+#!/bin/bash
 set -euo pipefail
 
 echo "============================================================"
