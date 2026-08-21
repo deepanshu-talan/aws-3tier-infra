@@ -194,75 +194,193 @@ jobs:
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
         run: |
           set -euo pipefail
+
           cd "$TF_WORKING_DIR"
 
-          FRONTEND_URL="https://${APP_DOMAIN_NAME}"
-          if [ -z "${APP_DOMAIN_NAME}" ]; then
+          echo "============================================================"
+          echo "Post-deployment verification"
+          echo "============================================================"
+
+          if [ -n "${APP_DOMAIN_NAME}" ]; then
+            FRONTEND_URL="https://${APP_DOMAIN_NAME}"
+          else
             FRONTEND_URL="$(terraform output -raw application_url)"
           fi
 
-          for attempt in {1..20}; do
-            if curl --fail --silent --show-error --max-time 15 "$FRONTEND_URL"; then
-              echo "Frontend is healthy."
+          echo "Frontend URL: ${FRONTEND_URL}"
+
+          for attempt in $(seq 1 20); do
+            echo "Checking frontend... attempt ${attempt}/20"
+
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --max-time 15 \
+              "${FRONTEND_URL}" \
+              > /dev/null; then
+
+              echo "Frontend public endpoint is healthy."
               break
             fi
 
-            if [ "$attempt" -eq 20 ]; then
-              echo "Frontend verification failed at $FRONTEND_URL"
+            if [ "${attempt}" -eq 20 ]; then
+              echo "ERROR: Frontend verification failed at ${FRONTEND_URL}"
               exit 1
             fi
 
-            echo "Waiting for frontend... attempt $attempt/20"
             sleep 15
           done
+
+          FRONTEND_ASG="$(terraform output -raw frontend_asg_name)"
+          BACKEND_ASG="$(terraform output -raw backend_asg_name)"
+
+          echo "Frontend ASG: ${FRONTEND_ASG}"
+          echo "Backend ASG: ${BACKEND_ASG}"
 
           verify_service_on_asg() {
             local asg_name="$1"
             local service_name="$2"
             local health_url="$3"
+
             local instance_ids
             local command_id
             local commands_file
+            local parameters_file
 
-            instance_ids="$(aws autoscaling describe-auto-scaling-groups \
-              --auto-scaling-group-names "$asg_name" \
-              --region "$AWS_REGION" \
-              --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'].InstanceId" \
-              --output text)"
+            echo ""
+            echo "------------------------------------------------------------"
+            echo "Verifying ${service_name}"
+            echo "ASG: ${asg_name}"
+            echo "Health URL: ${health_url}"
+            echo "------------------------------------------------------------"
 
-            if [ -z "$instance_ids" ]; then
-              echo "No InService instances found for $asg_name"
-              exit 1
+            instance_ids="$(
+              aws autoscaling describe-auto-scaling-groups \
+                --auto-scaling-group-names "${asg_name}" \
+                --region "${AWS_REGION}" \
+                --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'].InstanceId" \
+                --output text
+            )"
+
+            if [ -z "${instance_ids}" ] || [ "${instance_ids}" = "None" ]; then
+              echo "ERROR: No InService instances found for ${asg_name}"
+              return 1
             fi
 
+            echo "Instances: ${instance_ids}"
+
             commands_file="$(mktemp)"
+            parameters_file="$(mktemp)"
 
-            printf '{"commands":["set -euo pipefail","docker ps --filter name=%s --format {{.Names}} | grep -x %s","curl --fail --silent --show-error --max-time 15 %s"]}\n' \
-              "$service_name" \
-              "$service_name" \
-              "$health_url" > "$commands_file"
+            cat > "${commands_file}" <<EOF
+          set -eu
 
-            command_id="$(aws ssm send-command \
-              --document-name "AWS-RunShellScript" \
-              --comment "Verify $service_name container and health endpoint" \
-              --instance-ids $instance_ids \
-              --parameters "file://$commands_file" \
-              --region "$AWS_REGION" \
-              --query "Command.CommandId" \
-              --output text)"
+          echo "Checking Docker container..."
 
-            rm -f "$commands_file"
+          if ! docker ps --format '{{.Names}}' | grep -Fxq '${service_name}'; then
+            echo "ERROR: ${service_name} container is not running."
+            docker ps -a
+            docker logs '${service_name}' || true
+            exit 1
+          fi
 
-            for instance_id in $instance_ids; do
-              aws ssm wait command-executed \
-                --command-id "$command_id" \
-                --instance-id "$instance_id" \
-                --region "$AWS_REGION"
+          echo "Container ${service_name} is running."
+
+          echo "Checking application endpoint..."
+
+          if ! curl --fail --silent --show-error --max-time 15 '${health_url}' > /dev/null; then
+            echo "ERROR: ${service_name} health check failed."
+            docker logs '${service_name}' || true
+            exit 1
+          fi
+
+          echo "${service_name} verification successful."
+          EOF
+
+            jq -n \
+              --rawfile commands "${commands_file}" \
+              '{
+                commands: (
+                  $commands
+                  | split("\n")
+                  | map(select(length > 0))
+                )
+              }' \
+              > "${parameters_file}"
+
+            echo "Sending verification command..."
+
+            command_id="$(
+              aws ssm send-command \
+                --document-name "AWS-RunShellScript" \
+                --comment "Verify ${service_name} deployment" \
+                --instance-ids ${instance_ids} \
+                --parameters "file://${parameters_file}" \
+                --region "${AWS_REGION}" \
+                --query "Command.CommandId" \
+                --output text
+            )"
+
+            rm -f "${commands_file}" "${parameters_file}"
+
+            echo "Verification SSM command: ${command_id}"
+
+            local failed=0
+
+            for instance_id in ${instance_ids}; do
+              echo ""
+              echo "Waiting for ${instance_id}..."
+
+              if aws ssm wait command-executed \
+                --command-id "${command_id}" \
+                --instance-id "${instance_id}" \
+                --region "${AWS_REGION}"; then
+
+                echo "Verification passed on ${instance_id}"
+
+                aws ssm get-command-invocation \
+                  --command-id "${command_id}" \
+                  --instance-id "${instance_id}" \
+                  --region "${AWS_REGION}" \
+                  --query "StandardOutputContent" \
+                  --output text || true
+
+              else
+                echo "ERROR: Verification failed on ${instance_id}"
+
+                aws ssm get-command-invocation \
+                  --command-id "${command_id}" \
+                  --instance-id "${instance_id}" \
+                  --region "${AWS_REGION}" \
+                  --query '{
+                    Status: Status,
+                    StatusDetails: StatusDetails,
+                    Output: StandardOutputContent,
+                    Error: StandardErrorContent
+                  }' \
+                  --output json || true
+
+                failed=1
+              fi
             done
+
+            if [ "${failed}" -ne 0 ]; then
+              return 1
+            fi
           }
 
-          FRONTEND_ASG="$(terraform output -raw frontend_asg_name)"
-          BACKEND_ASG="$(terraform output -raw backend_asg_name)"
+          verify_service_on_asg \
+            "${FRONTEND_ASG}" \
+            "goal-tracker-frontend" \
+            "http://localhost:3000/"
 
-          verify_service_on_asg "$FRONTEND_ASG" "goal-tracker-frontend" "http://localhost:3000/"
-          verify_service_on_asg "$BACKEND_ASG" "goal-tracker-backend" "http://localhost:8080/health"
+          verify_service_on_asg \
+            "${BACKEND_ASG}" \
+            "goal-tracker-backend" \
+            "http://localhost:8080/goals"
+
+          echo ""
+          echo "============================================================"
+          echo "POST-DEPLOYMENT VERIFICATION SUCCESSFUL"
+          echo "============================================================"
