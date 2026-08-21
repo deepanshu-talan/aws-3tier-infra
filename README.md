@@ -407,31 +407,82 @@ Trivy findings are reviewed individually. Only findings that are intentionally a
 
 ## Deployment
 
-Application deployment is performed through AWS Systems Manager.
+### Prerequisites
 
-```text
-GitHub Actions
-      │
-      ▼
-Docker Build
-      │
-      ▼
-Trivy Scan
-      │
-      ▼
-DockerHub
-      │
-      ▼
-AWS Systems Manager
-      │
-      ▼
-Private EC2 Instances
-      │
-      ▼
-Health Checks
+* AWS Account
+* AWS CLI
+* Terraform
+* Docker
+* Git
+* GitHub Account
+* DockerHub Account
+* Route 53 hosted domain
+* AWS IAM permissions for Terraform
+* GitHub Actions OIDC configured for AWS
+
+Verify installations:
+
+```bash
+aws --version
+terraform --version
+docker --version
+git --version
 ```
 
-The deployment references the image built from the same Git commit, preventing accidental deployment of an unrelated image version.
+Verify AWS authentication:
+
+```bash
+aws sts get-caller-identity
+```
+
+### Deploy Infrastructure
+
+```bash
+git clone https://github.com/deepanshu-talan/aws-3tier-infra
+cd aws-3tier-infra
+
+cd terraform-infra/environments/dev
+
+terraform init
+terraform fmt -recursive
+terraform validate
+terraform plan
+terraform apply
+```
+
+### Application Deployment
+
+The application is deployed using GitHub Actions and AWS Systems Manager.
+
+```text
+GitHub Push
+    ↓
+CI Checks
+    ↓
+Docker Build + Trivy Scan
+    ↓
+DockerHub
+    ↓
+Terraform Plan / Apply
+    ↓
+AWS Systems Manager
+    ↓
+Private EC2
+    ↓
+Health Check
+```
+
+Docker images are tagged using the **Git commit SHA** for immutable and traceable deployments.
+
+### Verify Deployment
+
+Check the ALB target health and application endpoint after deployment:
+
+```bash
+curl https://<YOUR_DOMAIN>
+```
+
+For EC2 administration, use **AWS Systems Manager Session Manager** instead of public SSH.
 
 ---
 
